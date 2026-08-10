@@ -27,6 +27,21 @@ type SdkTarget {
   pub siblingModuleName: String! = "sibling-mod"
 
   """
+  Name of the module at the head of the local dependency chain.
+  """
+  pub chainRootName: String! = "chain-a"
+
+  """
+  Name of the module in the middle of the local dependency chain.
+  """
+  pub chainMidName: String! = "chain-b"
+
+  """
+  Name of the module at the leaf of the local dependency chain.
+  """
+  pub chainLeafName: String! = "chain-c"
+
+  """
   Return a copy of this target with a different command timeout.
   """
   pub withTimeout(timeout: String!): SdkTarget! {
@@ -60,6 +75,27 @@ type SdkTarget {
   }
 
   """
+  Workspace-relative path of the chain's head module.
+  """
+  pub chainRootPath: String! {
+    ".dagger/modules/" + chainRootName
+  }
+
+  """
+  Workspace-relative path of the chain's middle module.
+  """
+  pub chainMidPath: String! {
+    ".dagger/modules/" + chainMidName
+  }
+
+  """
+  Workspace-relative path of the chain's leaf module.
+  """
+  pub chainLeafPath: String! {
+    ".dagger/modules/" + chainLeafName
+  }
+
+  """
   Run `dagger sdk install` for the SDK under test and capture the result.
   """
   pub install: SdkRun! {
@@ -90,10 +126,42 @@ type SdkTarget {
   }
 
   """
+  Run `dagger generate` from the workspace root on the local dependency chain
+  and capture the result.
+  """
+  pub generateChainFromRoot: SdkRun! {
+    SdkRun(container: chainGeneratedFromRootState, args: generateArgs)
+  }
+
+  """
+  Run `dagger generate` from the chain's leaf module directory, with nothing in
+  the chain generated beforehand, and capture the result.
+  """
+  pub generateChainFromLeaf: SdkRun! {
+    SdkRun(container: chainGeneratedFromLeafState, args: generateArgs)
+  }
+
+  """
   Run a dagger command from the workspace root after the SDK is installed.
   """
   pub runInstalled(args: [String!]!): SdkRun! {
     runOn(installedState, "/work", args)
+  }
+
+  """
+  Run a dagger command from the workspace root after the chain was generated
+  from the workspace root.
+  """
+  pub runAfterChainRootGenerate(args: [String!]!): SdkRun! {
+    runOn(chainGeneratedFromRootState, "/work", args)
+  }
+
+  """
+  Run a dagger command from the workspace root after the chain was generated
+  from its leaf module directory.
+  """
+  pub runAfterChainLeafGenerate(args: [String!]!): SdkRun! {
+    runOn(chainGeneratedFromLeafState, "/work", args)
   }
 
   """
@@ -176,6 +244,49 @@ type SdkTarget {
   """
   let cwdGeneratedState: Container! {
     pipe(cwdSnapshotState, "/work/" + modulePath, generateArgs)
+  }
+
+  """
+  Workspace state with the three chain modules scaffolded, not yet wired
+  together. The leaf comes first so each `deps add` has its target on disk.
+  """
+  let chainScaffoldedState: Container! {
+    let withLeaf = pipe(installedState, "/work", ["module", "init", sdkInstallName, chainLeafName])
+    let withMid = pipe(withLeaf, "/work", ["module", "init", sdkInstallName, chainMidName])
+    pipe(withMid, "/work", ["module", "init", sdkInstallName, chainRootName])
+  }
+
+  """
+  Chain workspace with each module declaring the next as a local path
+  dependency, committed so later git status calls see only what generation
+  changed. Nothing in the chain is generated yet.
+  """
+  let chainInitializedState: Container! {
+    let midWired = pipe(chainScaffoldedState, "/work/" + chainMidPath, ["module", "deps", "add", "../" + chainLeafName])
+    let rootWired = pipe(midWired, "/work/" + chainRootPath, ["module", "deps", "add", "../" + chainMidName])
+
+    rootWired
+      .withExec(["git", "add", "-A"])
+      .withExec([
+        "git",
+        "-c", "user.email=sdk-sdk@dagger.io",
+        "-c", "user.name=sdk-sdk",
+        "commit", "-q", "--allow-empty", "-m", "before chain generate",
+      ])
+  }
+
+  """
+  Chain workspace after `dagger generate` from the workspace root.
+  """
+  let chainGeneratedFromRootState: Container! {
+    pipe(chainInitializedState, "/work", generateArgs)
+  }
+
+  """
+  Chain workspace after `dagger generate` from the leaf module's directory.
+  """
+  let chainGeneratedFromLeafState: Container! {
+    pipe(chainInitializedState, "/work/" + chainLeafPath, generateArgs)
   }
 
   """

@@ -34,6 +34,20 @@ commands the way a user would:
   module's directory with a sibling module scaffolded elsewhere, the sibling
   is left untouched.
 
+A second workspace exercises local path dependencies — `chain-a` depends on
+`chain-b`, which depends on `chain-c`, each by relative path
+([dagger#13688](https://github.com/dagger/dagger/issues/13688)):
+
+- `dagger generate` from the workspace root generates the whole chain, after
+  which `dagger api functions chain-a` loads the head and both of its
+  transitive dependencies.
+- `dagger generate` from `chain-c` leaves `chain-a` and `chain-b` untouched.
+- `dagger generate` from `chain-c` works even though nothing in the chain has
+  been generated yet, and `chain-c` loads afterwards. This is the state a user
+  hits right after cloning: the dependents cannot load until the leaf they
+  depend on is generated, so an SDK that widens generation to the whole
+  workspace fails here.
+
 Function-level contract checks additionally call the SDK's `initModule`
 directly (always with an explicit `--path`, as the engine does) and inspect
 the returned changesets: `initModule` must seed at least one file, must not
@@ -51,6 +65,7 @@ behavior they cover and reported as `<group>:<check>`:
 | `init` | `checks-init.dang` | `dagger module init` and the workspace entries it writes |
 | `generation` | `checks-generate.dang` | `dagger generate` and the SDK's `@generate` hook |
 | `module` | `checks-module.dang` | the scaffolded module loading and serving its API |
+| `chain` | `checks-chain.dang` | local path dependencies and cwd-anchored generation |
 | `contract` | `checks-contract.dang` | function-level `initModule` changeset behavior |
 | `template` | `template.dang` | sdk-sdk's own scaffolding template |
 

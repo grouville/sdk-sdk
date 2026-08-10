@@ -1,0 +1,58 @@
+"""
+Checks for workspaces where modules depend on each other by local path.
+
+The chain is chain-a -> chain-b -> chain-c, each declaring the next as a local
+path dependency. Generation has to resolve the whole chain from the workspace
+root, and stay anchored at the caller's cwd from anywhere else — including
+before any of it has been generated.
+
+See https://github.com/dagger/dagger/issues/13688.
+"""
+type ChainChecks {
+  let harness: SdkHarness!
+
+  """
+  `dagger generate` from the workspace root should generate the whole chain.
+
+  Loading the head of the chain afterwards pulls in both of its transitive
+  local dependencies, so it only succeeds when all three were generated.
+  """
+  pub generatesWholeChainFromRoot(ws: Workspace!): Void @check {
+    let testTarget = harness.sdkTarget(ws)
+    testTarget.generateChainFromRoot.assertSuccess
+    testTarget.runAfterChainRootGenerate(["api", "functions", testTarget.chainRootName]).assertSuccess
+  }
+
+  """
+  `dagger generate` from the leaf module should leave its dependents untouched.
+  """
+  pub respectsCwd(ws: Workspace!): Void @check {
+    let testTarget = harness.sdkTarget(ws)
+    let run = testTarget.generateChainFromLeaf
+    run.assertSuccess
+
+    let rootDrift = run.workspaceChanges(testTarget.chainRootPath)
+    if (rootDrift != "") {
+      raise "generate from " + testTarget.chainLeafPath + " should not touch its dependent " + testTarget.chainRootPath + "\nchanged:\n" + rootDrift
+    }
+
+    let midDrift = run.workspaceChanges(testTarget.chainMidPath)
+    if (midDrift != "") {
+      raise "generate from " + testTarget.chainLeafPath + " should not touch its dependent " + testTarget.chainMidPath + "\nchanged:\n" + midDrift
+    }
+  }
+
+  """
+  `dagger generate` from the leaf module should generate it even when nothing
+  that depends on it has been generated yet.
+
+  The dependents cannot load until the leaf they depend on is generated, so an
+  SDK that widens generation to the whole workspace fails here on the very
+  state a user hits after cloning a repository.
+  """
+  pub generatesLeafWithUngeneratedDependents(ws: Workspace!): Void @check {
+    let testTarget = harness.sdkTarget(ws)
+    testTarget.generateChainFromLeaf.assertSuccess
+    testTarget.runAfterChainLeafGenerate(["api", "functions", testTarget.chainLeafName]).assertSuccess
+  }
+}
